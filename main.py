@@ -1,4 +1,7 @@
 import os
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
 import json
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
@@ -86,7 +89,7 @@ async def lifespan(app: FastAPI):
 
     if not os.path.exists("data/settings.json"):
         with open("data/settings.json", "w", encoding="utf-8") as f:
-            json.dump({"companyName": "My Company", "industry": "Electrical", "logoBase64": ""}, f, indent=2)
+            json.dump({"companyName": "mycompany", "industry": "Electrical", "logoBase64": ""}, f, indent=2)
 
     with open("data/compliance_rules.json", "w", encoding="utf-8") as f:
         json.dump(COMPLIANCE_RULES, f, indent=2)

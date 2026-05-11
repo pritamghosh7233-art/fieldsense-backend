@@ -1,0 +1,107 @@
+[
+  {
+    "code": "OSHA 1910.303",
+    "name": "Electrical wiring methods",
+    "description": "General requirements for electrical installations and wiring",
+    "keywords": [
+      "wiring",
+      "panel",
+      "terminal",
+      "corrosion",
+      "insulation",
+      "grounding",
+      "circuit"
+    ]
+  },
+  {
+    "code": "ISO 50001",
+    "name": "Energy management systems",
+    "description": "Requirements for energy performance, efficiency and consumption",
+    "keywords": [
+      "energy",
+      "meter",
+      "efficiency",
+      "consumption",
+      "power",
+      "monitor"
+    ]
+  },
+  {
+    "code": "IEC 60079-14",
+    "name": "Explosive atmospheres",
+    "description": "Electrical installations design in hazardous areas",
+    "keywords": [
+      "explosion",
+      "hazardous",
+      "flammable",
+      "gas",
+      "zone",
+      "spark"
+    ]
+  },
+  {
+    "code": "API 570",
+    "name": "Piping inspection code",
+    "description": "Inspection, repair and alteration of in-service piping",
+    "keywords": [
+      "pipe",
+      "corrosion",
+      "leak",
+      "thickness",
+      "rust",
+      "flow"
+    ]
+  },
+  {
+    "code": "NFPA 72",
+    "name": "Fire alarm and signaling",
+    "description": "Requirements for fire alarm systems and emergency communications",
+    "keywords": [
+      "fire",
+      "alarm",
+      "smoke",
+      "detector",
+      "sprinkler",
+      "heat"
+    ]
+  },
+  {
+    "code": "ISO 45001",
+    "name": "Occupational health and safety",
+    "description": "Requirements for occupational health and safety management",
+    "keywords": [
+      "safety",
+      "hazard",
+      "PPE",
+      "risk",
+      "incident",
+      "injury"
+    ]
+  },
+  {
+    "code": "API 510",
+    "name": "Pressure vessel inspection",
+    "description": "Inspection, repair, alteration of pressure vessels",
+    "keywords": [
+      "pressure",
+      "vessel",
+      "weld",
+      "crack",
+      "integrity",
+      "relief"
+    ]
+  },
+  {
+    "code": "ASHRAE 15",
+    "name": "Refrigeration safety",
+    "description": "Safety code for mechanical and absorption refrigeration systems",
+    "keywords": [
+      "refrigerant",
+      "leak",
+      "compressor",
+      "cooling",
+      "hvac",
+      "chiller"
+    ]
+  }
+]

@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from typing import Optional
 
 
@@ -46,8 +46,21 @@ class CompanySettings(BaseModel):
 
 
 class AnalyzeRequest(BaseModel):
-    transcript: str
-    imageBase64Array: list[str]
+    transcript: str = ""
+    # Mobile sends `images` (list[str]), dashboard sends `imageBase64Array` — accept both
+    imageBase64Array: list[str] = []
+    images: list[str] = []
     industry: str
     zone: str
+    session_id: Optional[str] = None   # sent by mobile, ignored by backend logic
     sessionHistory: list[dict] = []
+
+    @model_validator(mode="after")
+    def merge_image_fields(self) -> "AnalyzeRequest":
+        """Normalise: merge `images` into `imageBase64Array` so downstream
+        code always reads from `imageBase64Array` regardless of which field
+        the client used."""
+        if self.images:
+            combined = list(dict.fromkeys(self.imageBase64Array + self.images))
+            object.__setattr__(self, "imageBase64Array", combined)
+        return self

@@ -4,7 +4,7 @@ from typing import Optional
 
 class ImageData(BaseModel):
     uri: str
-    base64: str
+    base64: str = ""
 
 
 class AIFindings(BaseModel):

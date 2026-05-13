@@ -23,59 +23,7 @@ COMPLIANCE_RULES = [
     {"code": "ASHRAE 15", "name": "Refrigeration safety", "description": "Safety code for mechanical and absorption refrigeration systems", "keywords": ["refrigerant", "leak", "compressor", "cooling", "hvac", "chiller"]},
 ]
 
-SAMPLE_SESSIONS = [
-    {
-        "session_id": "FS-2024-001",
-        "created_at": "2024-11-15T09:30:00Z",
-        "status": "synced",
-        "plantName": "Sunrise Power Plant",
-        "section": "Section B — Electrical",
-        "industry": "Electrical",
-        "operator": "John Smith",
-        "overallRiskScore": 74,
-        "report_pdf_path": "",
-        "zones": [
-            {
-                "zoneId": "z1", "zoneLabel": "Zone A", "transcript": "Corrosion on terminal block observed.",
-                "audioUri": "", "severity": "Critical", "images": [],
-                "aiFindings": {"anomalies": ["Corrosion on terminal block", "Oxidation on bus bars"], "riskScore": 78, "complianceCodes": ["OSHA 1910.303", "IEC 60079-14"], "predictedFailureWindow": "4-8 weeks", "maintenancePriority": "P1", "summary": "Critical corrosion requiring immediate action."},
-            },
-            {
-                "zoneId": "z2", "zoneLabel": "Zone B", "transcript": "Loose wiring and heat discolouration noted.",
-                "audioUri": "", "severity": "High", "images": [],
-                "aiFindings": {"anomalies": ["Loose wiring", "Heat discolouration on panel"], "riskScore": 65, "complianceCodes": ["OSHA 1910.303"], "predictedFailureWindow": "6-10 weeks", "maintenancePriority": "P2", "summary": "Wiring issues require scheduled repair within 30 days."},
-            },
-            {
-                "zoneId": "z3", "zoneLabel": "Zone C", "transcript": "Minor insulation wear on cables.",
-                "audioUri": "", "severity": "Low", "images": [],
-                "aiFindings": {"anomalies": ["Minor insulation wear"], "riskScore": 32, "complianceCodes": ["OSHA 1910.303"], "predictedFailureWindow": "12-16 weeks", "maintenancePriority": "P3", "summary": "Monitor insulation wear at next scheduled inspection."},
-            },
-        ],
-    },
-    {
-        "session_id": "FS-2024-002",
-        "created_at": "2024-11-20T14:00:00Z",
-        "status": "pending_sync",
-        "plantName": "Metro HVAC Block C",
-        "section": "Cooling Section",
-        "industry": "HVAC",
-        "operator": "Sarah Jones",
-        "overallRiskScore": 58,
-        "report_pdf_path": "",
-        "zones": [
-            {
-                "zoneId": "z1", "zoneLabel": "Zone 1", "transcript": "Refrigerant leak suspected near compressor.",
-                "audioUri": "", "severity": "Critical", "images": [],
-                "aiFindings": {"anomalies": ["Refrigerant leak suspected"], "riskScore": 72, "complianceCodes": ["ASHRAE 15"], "predictedFailureWindow": "2-4 weeks", "maintenancePriority": "P1", "summary": "Suspected refrigerant leak requires immediate inspection and repair."},
-            },
-            {
-                "zoneId": "z2", "zoneLabel": "Zone 2", "transcript": "Compressor showing signs of wear.",
-                "audioUri": "", "severity": "Medium", "images": [],
-                "aiFindings": {"anomalies": ["Compressor wear detected", "Unusual vibration levels"], "riskScore": 44, "complianceCodes": ["ASHRAE 15", "ISO 50001"], "predictedFailureWindow": "8-12 weeks", "maintenancePriority": "P2", "summary": "Schedule compressor maintenance within 30 days to prevent failure."},
-            },
-        ],
-    },
-]
+SAMPLE_SESSIONS = []
 
 
 @asynccontextmanager
@@ -89,7 +37,7 @@ async def lifespan(app: FastAPI):
 
     if not os.path.exists("data/settings.json"):
         with open("data/settings.json", "w", encoding="utf-8") as f:
-            json.dump({"companyName": "mycompany", "industry": "Electrical", "logoBase64": ""}, f, indent=2)
+            json.dump({"companyName": "", "industry": "", "logoBase64": ""}, f, indent=2)
 
     with open("data/compliance_rules.json", "w", encoding="utf-8") as f:
         json.dump(COMPLIANCE_RULES, f, indent=2)

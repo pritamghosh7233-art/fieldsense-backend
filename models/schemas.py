@@ -42,7 +42,7 @@ class Session(BaseModel):
 
 class CompanySettings(BaseModel):
     companyName: str = "My Company"
-    industry: str = "Electrical"
+    industry: str = ""
     logoBase64: str = ""
 
 

@@ -4,7 +4,7 @@ from typing import Optional
 
 class ImageData(BaseModel):
     uri: str
-    base64: str = ""
+    base64: str
 
 
 class AIFindings(BaseModel):
@@ -30,6 +30,7 @@ class Session(BaseModel):
     session_id: str
     created_at: str
     status: str
+    companyName: str = ""
     plantName: str
     section: str
     operator: str

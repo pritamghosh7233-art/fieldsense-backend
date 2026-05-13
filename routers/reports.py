@@ -42,7 +42,8 @@ def generate_report(session_id: str):
                 s["report_pdf_path"] = pdf_path
         _write_sessions(sessions)
 
-        return {"report_path": pdf_path, "session_id": session_id}
+        report_url = f"/api/reports/{session_id}"
+        return {"report_path": pdf_path, "reportUrl": report_url, "session_id": session_id}
     except HTTPException:
         raise
     except Exception as e:

@@ -86,7 +86,7 @@ class FooterCanvas(canvas.Canvas):
 # ── Cover page ────────────────────────────────────────────────────────────────
 
 def _draw_cover(c: canvas.Canvas, session: dict, company_settings: dict):
-    """Plain white corporate cover — full vertical + horizontal centre."""
+    """Corporate cover — heading block truly centred, inspector pinned to bottom."""
     plant_name  = session.get("plantName", "")
     operator    = session.get("operator", "")
     company     = company_settings.get("companyName", "")
@@ -95,11 +95,11 @@ def _draw_cover(c: canvas.Canvas, session: dict, company_settings: dict):
 
     MARGIN = 60
     MAX_W  = PAGE_W - MARGIN * 2
-    CX     = PAGE_W / 2          # horizontal centre — every element uses this
+    CX     = PAGE_W / 2
 
-    # ── Heading: auto-size ────────────────────────────────────────────────────
+    # Auto-size heading
     line1 = "Inspection Report on"
-    line2 = f'"{plant_name}"'
+    line2 = '"' + plant_name + '"'
     font  = "Times-Bold"
     size  = 36
     while size >= 14:
@@ -107,49 +107,48 @@ def _draw_cover(c: canvas.Canvas, session: dict, company_settings: dict):
             break
         size -= 1
 
-    leading = size * 1.3
+    leading  = size * 1.4
+    GAP_RULE = 20
+    GAP_SUB  = 22
+    SUB_SIZE = 13
 
-    # Calculate total block height (2 heading lines + rule + sub-heading)
-    # then vertically centre that block on the page
-    block_h = leading * 2 + 24 + 28 + 13   # approx total height
-    top_y   = PAGE_H / 2 + block_h / 2     # true vertical centre
+    # Total block height and true-centre placement
+    block_h = leading + GAP_RULE + GAP_SUB + SUB_SIZE
+    line1_y = PAGE_H / 2 + block_h / 2
+    line2_y = line1_y - leading
+    rule_y  = line2_y - GAP_RULE
+    sub_y   = rule_y  - GAP_SUB
 
-    # ── Two heading lines ─────────────────────────────────────────────────────
+    # Heading lines
     c.setFont(font, size)
     c.setFillColor(BLACK)
-    c.drawCentredString(CX, top_y,           line1)
-    c.drawCentredString(CX, top_y - leading, line2)
+    c.drawCentredString(CX, line1_y, line1)
+    c.drawCentredString(CX, line2_y, line2)
 
-    # ── Horizontal rule ───────────────────────────────────────────────────────
-    rule_y = top_y - leading - 24
+    # Rule
     c.setStrokeColor(BLACK)
-    c.setLineWidth(0.6)
+    c.setLineWidth(0.8)
     c.line(MARGIN, rule_y, PAGE_W - MARGIN, rule_y)
 
-    # ── Sub-heading ───────────────────────────────────────────────────────────
-    sub      = f"Detailed analysis report on {panel_names}"
-    sub_font = "Times-Roman"
-    sub_size = 13
-    while stringWidth(sub, sub_font, sub_size) > MAX_W and len(sub) > 20:
-        sub = sub[:-4] + "…"
-    c.setFont(sub_font, sub_size)
+    # Sub-heading
+    sub = "Detailed analysis report on " + panel_names
+    while stringWidth(sub, "Times-Roman", SUB_SIZE) > MAX_W and len(sub) > 20:
+        sub = sub[:-4] + "..."
+    c.setFont("Times-Roman", SUB_SIZE)
     c.setFillColor(GRAY_TEXT)
-    c.drawCentredString(CX, rule_y - 28, sub)
+    c.drawCentredString(CX, sub_y, sub)
 
-    # ── Inspector block — pinned near page bottom ─────────────────────────────
-    bottom_y = 90
-
+    # Inspector block pinned to bottom
+    BOTTOM = 72
     c.setStrokeColor(LIGHT_GRAY)
-    c.setLineWidth(0.4)
-    c.line(MARGIN + 40, bottom_y + 52, PAGE_W - MARGIN - 40, bottom_y + 52)
-
+    c.setLineWidth(0.5)
+    c.line(MARGIN + 60, BOTTOM + 46, PAGE_W - MARGIN - 60, BOTTOM + 46)
     c.setFont("Times-Bold", 13)
     c.setFillColor(BLACK)
-    c.drawCentredString(CX, bottom_y + 28, f"Inspected by:  {operator}")
-
+    c.drawCentredString(CX, BOTTOM + 24, "Inspected by:  " + operator)
     c.setFont("Times-Roman", 12)
     c.setFillColor(GRAY_TEXT)
-    c.drawCentredString(CX, bottom_y + 8, company)
+    c.drawCentredString(CX, BOTTOM, company)
 
 
 # ── Cover as an inline Flowable ───────────────────────────────────────────────

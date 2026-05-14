@@ -55,8 +55,8 @@ def risk_timeline(priority: str) -> str:
 # ── Footer canvas ─────────────────────────────────────────────────────────────
 
 class FooterCanvas(canvas.Canvas):
-    """Footer on every body page except the TOC (idx 0).
-    Cover is merged separately so it never appears here."""
+    """Footer on every body page except the cover (idx 0) and TOC (idx 1).
+    Cover is now page 0 in the story itself."""
 
     def __init__(self, *args, session=None, company_settings=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -71,12 +71,13 @@ class FooterCanvas(canvas.Canvas):
     def save(self):
         for idx, page in enumerate(self._saved_pages):
             self.__dict__.update(page)
-            if idx >= 1:          # idx 0 = TOC (no footer); idx 1+ = content
-                self._draw_footer(idx)
+            # idx 0 = cover (no footer), idx 1 = TOC (no footer), idx 2+ = content
+            if idx >= 2:
+                self._draw_footer(idx - 1)   # page numbers start at 1
             super().showPage()
         super().save()
 
-    def _draw_footer(self, page_idx: int):
+    def _draw_footer(self, page_num: int):
         self.saveState()
         y       = 18
         company = self.company_settings.get("companyName", "")
@@ -85,7 +86,7 @@ class FooterCanvas(canvas.Canvas):
         self.line(36, y + 10, PAGE_W - 36, y + 10)
         self.setFont("Times-Roman", 7)
         self.setFillColor(GRAY_TEXT)
-        self.drawString(36, y, f"Page {page_idx}")
+        self.drawString(36, y, f"Page {page_num}")
         self.drawCentredString(PAGE_W / 2, y, "CONFIDENTIAL")
         self.drawRightString(PAGE_W - 36, y, company)
         self.restoreState()
@@ -114,9 +115,8 @@ def _draw_cover(c: canvas.Canvas, session: dict, company_settings: dict):
         size -= 1
 
     leading = size * 1.3
-    # Centre the two-line heading block vertically on the page
     block_h = leading * 2
-    top_y   = PAGE_H / 2 + block_h / 2 + 40   # slightly above true centre
+    top_y   = PAGE_H / 2 + block_h / 2 + 40
 
     c.setFont(font, size)
     c.setFillColor(BLACK)
@@ -128,11 +128,9 @@ def _draw_cover(c: canvas.Canvas, session: dict, company_settings: dict):
     c.setLineWidth(0.6)
     c.line(MARGIN, rule_y, PAGE_W - MARGIN, rule_y)
 
-    # Sub-heading — wrap if too long
     sub      = f"Detailed analysis report on {panel_names}"
     sub_font = "Times-Roman"
     sub_size = 9
-    # If the sub-heading overflows, truncate with ellipsis
     while stringWidth(sub, sub_font, sub_size) > MAX_W and len(sub) > 20:
         sub = sub[:-4] + "…"
     c.setFont(sub_font, sub_size)
@@ -146,6 +144,28 @@ def _draw_cover(c: canvas.Canvas, session: dict, company_settings: dict):
     c.setFont("Times-Roman", 10)
     c.setFillColor(GRAY_TEXT)
     c.drawCentredString(PAGE_W / 2, rule_y - 78, company)
+
+
+# ── Cover as an inline Flowable ───────────────────────────────────────────────
+
+class _CoverPageFlowable(Spacer):
+    """Renders the cover using canvas primitives as the very first story page.
+    Claiming full availHeight forces ReportLab to treat it as a whole page,
+    so the following PageBreak lands on a fresh sheet — no PDF merge needed."""
+
+    def __init__(self, session: dict, company_settings: dict):
+        super().__init__(width=PAGE_W, height=PAGE_H)
+        self._session          = session
+        self._company_settings = company_settings
+
+    def draw(self):
+        _draw_cover(self.canv, self._session, self._company_settings)
+
+    def wrap(self, availWidth, availHeight):
+        return availWidth, availHeight   # claim the full page
+
+    def split(self, availWidth, availHeight):
+        return [self]                    # never split across pages
 
 
 # ── Table of Contents ─────────────────────────────────────────────────────────
@@ -307,10 +327,8 @@ def _zone_analysis(zones: list, trend_data: dict) -> list:
 
         story.append(_zone_sub_title(f"1.{idx + 1}  {label}"))
 
-        # ── Badge row: use Paragraph cells so text wraps instead of overflowing ──
         bg, fg = severity_colors(severity)
 
-        # Split into two rows of 2 cells each so nothing is cramped
         badge_data = [
             [
                 _p(f"Severity: {severity}", font="Times-Bold", size=9, color=fg),
@@ -321,7 +339,7 @@ def _zone_analysis(zones: list, trend_data: dict) -> list:
                 _p(f"Failure Window: {failure}", font="Times-Roman", size=9),
             ],
         ]
-        USABLE = PAGE_W - 100   # 50pt margin each side
+        USABLE = PAGE_W - 100
         badge_tbl = Table(badge_data, colWidths=[USABLE / 2, USABLE / 2])
         badge_tbl.setStyle(TableStyle([
             ("BACKGROUND",    (0, 0), (0, 0), bg),
@@ -339,20 +357,17 @@ def _zone_analysis(zones: list, trend_data: dict) -> list:
         story.append(badge_tbl)
         story.append(Spacer(1, 8))
 
-        # Anomalies
         anomalies = findings.get("anomalies", [])
         if anomalies:
             story.append(Paragraph("<b>Observed Anomalies:</b>", body_style))
             for a in anomalies:
                 story.append(Paragraph(f"\u2022  {a}", bullet_style))
 
-        # Summary
         summary = findings.get("summary", "")
         if summary:
             story.append(Spacer(1, 4))
             story.append(_body(summary))
 
-        # Compliance codes
         codes = findings.get("complianceCodes", [])
         if codes:
             story.append(Paragraph(
@@ -360,12 +375,10 @@ def _zone_analysis(zones: list, trend_data: dict) -> list:
                 code_style,
             ))
 
-        # Trend
         delta_str = f"+{delta}" if delta > 0 else str(delta)
         story.append(_small(f"Trend vs previous inspection: {delta_str} points"))
         story.append(Spacer(1, 10))
 
-        # Images
         story += _zone_images(zone)
         story.append(Spacer(1, 14))
 
@@ -378,8 +391,6 @@ def _zone_action_table(zones: list, report_content: dict) -> list:
     story = []
     story += _section_title("2. Zone-wise Action Table")
 
-    # Column widths — total must equal PAGE_W - leftMargin - rightMargin = 495pt
-    # Zone/Item | Description/Anomaly | Severity | Risk | Timeline | Rec. Action
     col_widths = [72, 138, 52, 38, 88, 107]   # sum = 495
 
     header = [
@@ -414,7 +425,6 @@ def _zone_action_table(zones: list, report_content: dict) -> list:
         timeline   = risk_timeline(priority)
         anomalies  = findings.get("anomalies", ["No anomalies recorded"])
         sched      = sched_lookup.get(label, {})
-        # Use schedule action if available; else a SHORT fallback (not full summary)
         rec_action = sched.get("action") or f"Review and address {label} findings per priority {priority}"
 
         bg, fg = severity_colors(severity)
@@ -429,10 +439,8 @@ def _zone_action_table(zones: list, report_content: dict) -> list:
                     _p(timeline,   size=8),
                     _p(rec_action, size=8),
                 ]
-                # Severity cell background
                 tbl_style += [
                     ("BACKGROUND", (2, row_idx), (2, row_idx), bg),
-                    # Alternate row tint for first row of each zone
                     ("BACKGROUND", (0, row_idx), (1, row_idx), ROW_ALT) if row_idx % 2 == 0
                     else ("BACKGROUND", (0, row_idx), (1, row_idx), colors.white),
                 ]
@@ -457,7 +465,6 @@ def _zone_action_table(zones: list, report_content: dict) -> list:
 # ── Final recommendation & conclusion ─────────────────────────────────────────
 
 def _build_fallback_summary(session: dict) -> str:
-    """Build a plain-text executive summary from zone data when AI fails."""
     zones    = session.get("zones", [])
     plant    = session.get("plantName", "the inspected plant")
     total    = len(zones)
@@ -469,9 +476,7 @@ def _build_fallback_summary(session: dict) -> str:
     ]
     avg_risk = int(sum(scores) / len(scores)) if scores else 0
 
-    lines = [
-        f"This inspection covered {total} zone{'s' if total != 1 else ''} at {plant}.",
-    ]
+    lines = [f"This inspection covered {total} zone{'s' if total != 1 else ''} at {plant}."]
     if critical:
         names = ", ".join(z.get("zoneLabel", "") for z in critical)
         lines.append(f"<b>Critical findings</b> were identified in: {names}. Immediate action is required.")
@@ -490,8 +495,6 @@ def _recommendation_section(report_content: dict, session: dict) -> list:
     story += _section_title("3. Final Recommendation & Conclusion")
 
     exec_summary = report_content.get("executiveSummary", "")
-
-    # If AI failed, replace the error string with a synthesised summary
     if (not exec_summary
             or "failed" in exec_summary.lower()
             or "review session data manually" in exec_summary.lower()):
@@ -500,10 +503,8 @@ def _recommendation_section(report_content: dict, session: dict) -> list:
     story.append(_body(exec_summary))
     story.append(Spacer(1, 10))
 
-    # Key recommendations — built from zone data if AI list is empty
     actions = report_content.get("priorityActions", [])
     if not actions:
-        # Synthesise from zones
         for zone in session.get("zones", []):
             findings = zone.get("aiFindings") or {}
             sev      = zone.get("severity", "Low")
@@ -534,7 +535,6 @@ def _recommendation_section(report_content: dict, session: dict) -> list:
                 leading=16, leftIndent=16, spaceAfter=5, textColor=fg,
             )))
 
-    # Compliance table
     comp = report_content.get("complianceSummary", [])
     if comp:
         story.append(Spacer(1, 10))
@@ -570,7 +570,6 @@ def _recommendation_section(report_content: dict, session: dict) -> list:
                 _p(row.get("standard", ""), size=9),
                 _p(s, font="Times-Bold",    size=9, color=fg),
             ])
-            # Alt row
             if ri % 2 == 0:
                 c_style.append(("BACKGROUND", (0, ri), (-1, ri), ROW_ALT))
         ctbl = Table(c_data, colWidths=[230, 120, 100])
@@ -642,15 +641,10 @@ def generate_report(session: dict, report_content: dict, company_settings: dict,
     path  = f"reports/{session['session_id']}.pdf"
     zones = session.get("zones", [])
 
-    # ── Cover page (separate canvas PDF) ─────────────────────────────────────
-    cover_path = path + ".cover.pdf"
-    c = canvas.Canvas(cover_path, pagesize=A4)
-    _draw_cover(c, session, company_settings)
-    c.showPage()
-    c.save()
-
-    # ── Story: TOC → Zone Analysis → Action Table → Recommendation → Inspector
+    # ── Story: Cover → PageBreak → TOC → sections ────────────────────────────
     story  = []
+    story.append(_CoverPageFlowable(session, company_settings))
+    story.append(PageBreak())
     story += _build_toc(zones)
     story.append(PageBreak())
     story += _zone_analysis(zones, trend_data)
@@ -660,9 +654,7 @@ def generate_report(session: dict, report_content: dict, company_settings: dict,
     story += _recommendation_section(report_content, session)
     story += _inspector_page(session, company_settings)
 
-    # ── Render story with footer canvas ──────────────────────────────────────
-    tmp_path = path + ".body.pdf"
-
+    # ── Single-pass render — no merge required ────────────────────────────────
     def canvas_factory(session_d, settings_d):
         class _C(FooterCanvas):
             def __init__(self, *a, **kw):
@@ -670,29 +662,10 @@ def generate_report(session: dict, report_content: dict, company_settings: dict,
         return _C
 
     doc = SimpleDocTemplate(
-        tmp_path, pagesize=A4,
+        path, pagesize=A4,
         topMargin=50, bottomMargin=42,
         leftMargin=50, rightMargin=50,
     )
     doc.build(story, canvasmaker=canvas_factory(session, company_settings))
-
-    # ── Merge cover + body ────────────────────────────────────────────────────
-    try:
-        import pypdf
-        writer = pypdf.PdfWriter()
-        for src in [cover_path, tmp_path]:
-            reader = pypdf.PdfReader(src)
-            for pg in reader.pages:
-                writer.add_page(pg)
-        with open(path, "wb") as f:
-            writer.write(f)
-        os.remove(cover_path)
-        os.remove(tmp_path)
-        logger.info(f"[generate_report] merged OK → {path}")
-    except Exception as e:
-        logger.error(f"[generate_report] merge failed ({e}), using body-only fallback")
-        os.rename(tmp_path, path)
-        if os.path.exists(cover_path):
-            os.remove(cover_path)
-
+    logger.info(f"[generate_report] written → {path}")
     return path

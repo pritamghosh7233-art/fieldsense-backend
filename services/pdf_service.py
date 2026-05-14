@@ -164,10 +164,17 @@ class _CoverPageFlowable(Spacer):
         self._company_settings = company_settings
 
     def draw(self):
-        _draw_cover(self.canv, self._session, self._company_settings)
+        # Reset canvas transform to true page origin (ignores doc margins)
+        c = self.canv
+        c.saveState()
+        c.resetTransforms()
+        _draw_cover(c, self._session, self._company_settings)
+        c.restoreState()
 
     def wrap(self, availWidth, availHeight):
-        return availWidth, availHeight   # claim the full page
+        # Return true A4 dimensions so the cover always gets a full page
+        from reportlab.lib.pagesizes import A4
+        return A4  # (595pt, 842pt) — not the margin-reduced available size
 
     def split(self, availWidth, availHeight):
         return [self]                    # never split across pages

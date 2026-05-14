@@ -38,6 +38,9 @@ class Session(BaseModel):
     overallRiskScore: int = 0
     zones: list[ZoneObservation] = []
     report_pdf_path: str = ""
+    report_content: Optional[dict] = None
+    approved: bool = False
+    approvedAt: Optional[str] = None
 
 
 class CompanySettings(BaseModel):

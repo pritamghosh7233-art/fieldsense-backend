@@ -33,6 +33,10 @@ def generate_report(session_id: str):
             raise HTTPException(status_code=404, detail="Session not found")
 
         company_settings = _read_settings()
+        # Prefer the companyName stored on the session (entered by mobile user)
+        # over whatever is currently in settings.json
+        if session.get("companyName"):
+            company_settings = {**company_settings, "companyName": session["companyName"]}
         report_content = ai_service.generate_report_content(session)
         trend_data = trend_service.get_session_trend(session)
         pdf_path = pdf_service.generate_report(session, report_content, company_settings, trend_data)

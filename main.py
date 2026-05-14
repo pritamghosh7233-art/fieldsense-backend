@@ -35,6 +35,10 @@ async def lifespan(app: FastAPI):
         with open("data/sessions.json", "w", encoding="utf-8") as f:
             json.dump(SAMPLE_SESSIONS, f, indent=2)
 
+    if not os.path.exists("data/approved_records.json"):
+        with open("data/approved_records.json", "w", encoding="utf-8") as f:
+            json.dump([], f, indent=2)
+
     if not os.path.exists("data/settings.json"):
         with open("data/settings.json", "w", encoding="utf-8") as f:
             json.dump({"companyName": "", "industry": "", "logoBase64": ""}, f, indent=2)

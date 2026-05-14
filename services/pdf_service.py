@@ -4,492 +4,645 @@ import base64
 import tempfile
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
-from reportlab.lib.units import mm, cm, inch
-pt = 1.0  # In ReportLab, 1 point == 1 unit; 'pt' is not exported by reportlab.lib.units
+from reportlab.lib.units import mm, cm
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
     PageBreak, Image, HRFlowable, KeepTogether
 )
 from reportlab.pdfgen import canvas
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT, TA_JUSTIFY
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from PIL import Image as PILImage
 
 PAGE_W, PAGE_H = A4
 
-# Colors
-DARK_BG = colors.HexColor("#1A1A2E")
-TEAL = colors.HexColor("#0F6E56")
-MUTED_WHITE = colors.HexColor("#8888AA")
-RED_BG = colors.HexColor("#FCEBEB")
-AMBER_BG = colors.HexColor("#FAEEDA")
-GREEN_BG = colors.HexColor("#EAF3DE")
-RED_TEXT = colors.HexColor("#A32D2D")
+# ── Severity / risk helpers ──────────────────────────────────────────────────
+
+GRAY_TEXT  = colors.HexColor("#555555")
+LIGHT_GRAY = colors.HexColor("#DDDDDD")
+BLACK      = colors.black
+RED_TEXT   = colors.HexColor("#A32D2D")
+RED_BG     = colors.HexColor("#FCEBEB")
 AMBER_TEXT = colors.HexColor("#854F0B")
+AMBER_BG   = colors.HexColor("#FAEEDA")
 GREEN_TEXT = colors.HexColor("#3B6D11")
-GRAY_TEXT = colors.HexColor("#666666")
+GREEN_BG   = colors.HexColor("#EAF3DE")
+TABLE_HEAD = colors.HexColor("#2C2C2C")
+ROW_ALT    = colors.HexColor("#F7F7F7")
 
 
-def risk_color(score: int):
-    if score >= 70:
-        return colors.HexColor("#E24B4A")
-    elif score >= 40:
-        return colors.HexColor("#EF9F27")
-    return colors.HexColor("#639922")
-
-
-def priority_colors(p: str):
+def severity_colors(sev: str):
     return {
-        "P1": (colors.HexColor("#FCEBEB"), RED_TEXT),
-        "P2": (colors.HexColor("#FAEEDA"), AMBER_TEXT),
-        "P3": (colors.HexColor("#EAF3DE"), GREEN_TEXT),
-    }.get(p, (colors.white, colors.black))
+        "Critical": (RED_BG,   RED_TEXT),
+        "High":     (AMBER_BG, AMBER_TEXT),
+        "Medium":   (AMBER_BG, AMBER_TEXT),
+        "Low":      (GREEN_BG, GREEN_TEXT),
+    }.get(sev, (colors.white, BLACK))
 
 
-def status_color(s: str):
+def risk_timeline(priority: str) -> str:
     return {
-        "Compliant": GREEN_TEXT,
-        "Non-Compliant": RED_TEXT,
-        "Needs Review": AMBER_TEXT,
-    }.get(s, colors.black)
+        "P1": "Immediate (within 24 hrs)",
+        "P2": "Short-term (within 30 days)",
+        "P3": "Planned (within 90 days)",
+    }.get(priority, "As scheduled")
 
 
-class HeaderFooterCanvas(canvas.Canvas):
+# ── Footer canvas (applied from page 3 onward; pages 1 & 2 = cover & TOC) ──
+
+class FooterCanvas(canvas.Canvas):
+    """Draws a minimal footer on every page except the cover (page index 0)
+    and the TOC page (page index 1)."""
+
     def __init__(self, *args, session=None, company_settings=None, **kwargs):
         super().__init__(*args, **kwargs)
-        self.session = session or {}
+        self.session          = session or {}
         self.company_settings = company_settings or {}
-        self._pages = []
+        self._saved_pages     = []
 
     def showPage(self):
-        self._pages.append(dict(self.__dict__))
+        self._saved_pages.append(dict(self.__dict__))
         self._startPage()
 
     def save(self):
-        total = len(self._pages)
-        for i, page in enumerate(self._pages):
+        total       = len(self._saved_pages)
+        # Body PDF page layout (cover is merged separately as page 1):
+        #   idx 0 → TOC          – no footer
+        #   idx 1+ → content     – footer with page numbers 1, 2, 3 …
+        content_total = total - 1  # exclude TOC from page count
+        for idx, page in enumerate(self._saved_pages):
             self.__dict__.update(page)
-            if i > 0:
-                self._draw_header_footer(i + 1, total)
+            if idx >= 1:                        # skip TOC (idx 0)
+                self._draw_footer(idx, content_total)
             super().showPage()
         super().save()
 
-    def _draw_header_footer(self, page_num, total):
+    def _draw_footer(self, page_idx: int, content_total: int):
+        """Tiny three-column footer: page# | CONFIDENTIAL | company name"""
         self.saveState()
-        # Header
-        self.setFillColor(DARK_BG)
-        self.rect(0, PAGE_H - 28, PAGE_W, 28, fill=1, stroke=0)
-        self.setFillColor(colors.white)
-        self.setFont("Helvetica-Bold", 10)
-        self.drawString(36, PAGE_H - 18, "FieldSense")
-        self.setFont("Helvetica", 10)
-        self.drawRightString(PAGE_W - 36, PAGE_H - 18, self.session.get("session_id", ""))
-        # Footer
-        self.setStrokeColor(GRAY_TEXT)
+        y       = 18
+        company = self.company_settings.get("companyName", "")
+        page_no = page_idx          # content pages: 1, 2, 3 …
+        # thin rule
+        self.setStrokeColor(LIGHT_GRAY)
         self.setLineWidth(0.5)
-        self.line(36, 30, PAGE_W - 36, 30)
+        self.line(36, y + 10, PAGE_W - 36, y + 10)
+        # text – 7pt Times-Roman
+        self.setFont("Times-Roman", 7)
         self.setFillColor(GRAY_TEXT)
-        self.setFont("Helvetica", 9)
-        self.drawString(36, 18, self.session.get("plantName", ""))
-        self.setFont("Helvetica-Bold", 9)
-        self.drawCentredString(PAGE_W / 2, 18, self.company_settings.get("companyName", ""))
-        self.setFont("Helvetica", 9)
-        self.drawRightString(PAGE_W - 36, 18, f"Page {page_num} of {total}")
+        self.drawString(36, y, f"Page {page_no}")              # left
+        self.drawCentredString(PAGE_W / 2, y, "CONFIDENTIAL")  # centre
+        self.drawRightString(PAGE_W - 36, y, company)           # right
         self.restoreState()
 
 
-def _cover_page(c, session, company_settings):
-    c.setFillColor(DARK_BG)
-    c.rect(0, 0, PAGE_W, PAGE_H, fill=1, stroke=0)
+# ── Cover page (pure canvas) ──────────────────────────────────────────────────
 
-    # Company name top-left
-    c.setFillColor(colors.white)
-    c.setFont("Helvetica", 14)
-    c.drawString(36, PAGE_H - 50, company_settings.get("companyName", "FieldSense"))
+def _draw_cover(c: canvas.Canvas, session: dict, company_settings: dict):
+    """White, minimal, corporate cover – no colours."""
+    plant_name   = session.get("plantName", "")
+    operator     = session.get("operator", "")
+    company      = company_settings.get("companyName", "")
+    zones        = session.get("zones", [])
+    panel_names  = ", ".join(z.get("zoneLabel", "") for z in zones) if zones else "All Zones"
 
-    # FieldSense logo
-    c.setFont("Helvetica-Bold", 42)
-    c.drawCentredString(PAGE_W / 2, PAGE_H - 160, "FieldSense")
+    # ── Heading: two centered lines, largest font size that fits the page ────
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    MARGIN = 60
+    MAX_W  = PAGE_W - MARGIN * 2
+    line1  = "Inspection Report on"
+    line2  = f'"{plant_name}"'
+    font   = "Times-Bold"
+    size   = 36
+    while size >= 14:
+        if max(stringWidth(line1, font, size), stringWidth(line2, font, size)) <= MAX_W:
+            break
+        size -= 1
+    leading = size * 1.28
+    top_y   = PAGE_H - 196
+    c.setFont(font, size)
+    c.setFillColor(BLACK)
+    c.drawCentredString(PAGE_W / 2, top_y,           line1)
+    c.drawCentredString(PAGE_W / 2, top_y - leading, line2)
+    rule_y = top_y - leading - 18
+    # thin rule below heading
+    c.setStrokeColor(BLACK)
+    c.setLineWidth(0.6)
+    c.line(60, rule_y, PAGE_W - 60, rule_y)
 
-    # Inspection Report
-    c.setFont("Helvetica", 18)
-    c.drawCentredString(PAGE_W / 2, PAGE_H - 195, "I n s p e c t i o n   R e p o r t")
+    # ── Sub-heading: detailed analysis report on [panel names] ────────────────
+    c.setFont("Times-Roman", 9)
+    c.setFillColor(GRAY_TEXT)
+    sub = f"Detailed analysis report on {panel_names}"
+    c.drawCentredString(PAGE_W / 2, rule_y - 22, sub)
 
-    # Teal rule
-    c.setStrokeColor(TEAL)
-    c.setLineWidth(2)
-    c.line(60, PAGE_H - 215, PAGE_W - 60, PAGE_H - 215)
+    # ── Gap then inspected-by line ────────────────────────────────────────────
+    c.setFont("Times-Roman", 10)
+    c.setFillColor(BLACK)
+    c.drawCentredString(PAGE_W / 2, rule_y - 72, f"Inspected by  {operator}")
 
-    # Session ID + date
-    c.setFillColor(MUTED_WHITE)
-    c.setFont("Helvetica", 13)
-    c.drawCentredString(PAGE_W / 2, PAGE_H - 240, f"{session.get('session_id', '')}  •  {session.get('created_at', '')[:10]}")
-
-    # Stat boxes
-    stats = [
-        ("Total Zones", str(len(session.get("zones", [])))),
-        ("Overall Risk Score", str(session.get("overallRiskScore", 0))),
-        ("Critical Findings", str(sum(1 for z in session.get("zones", []) if z.get("severity") == "Critical"))),
-    ]
-    box_w, box_h = 130, 60
-    start_x = (PAGE_W - (box_w * 3 + 20)) / 2
-    for i, (label, value) in enumerate(stats):
-        bx = start_x + i * (box_w + 10)
-        by = PAGE_H - 340
-        c.setStrokeColor(colors.white)
-        c.setFillColor(DARK_BG)
-        c.setLineWidth(1)
-        c.rect(bx, by, box_w, box_h, fill=1, stroke=1)
-        c.setFillColor(MUTED_WHITE)
-        c.setFont("Helvetica", 9)
-        c.drawCentredString(bx + box_w / 2, by + 42, label)
-        c.setFillColor(colors.white)
-        c.setFont("Helvetica-Bold", 22)
-        c.drawCentredString(bx + box_w / 2, by + 16, value)
-
-    # Risk oval
-    score = session.get("overallRiskScore", 0)
-    oval_color = risk_color(score)
-    c.setFillColor(oval_color)
-    c.ellipse(PAGE_W / 2 - 55, PAGE_H - 440, PAGE_W / 2 + 55, PAGE_H - 370, fill=1, stroke=0)
-    c.setFillColor(colors.white)
-    c.setFont("Helvetica-Bold", 36)
-    c.drawCentredString(PAGE_W / 2, PAGE_H - 415, str(score))
-    c.setFont("Helvetica", 10)
-    c.drawCentredString(PAGE_W / 2, PAGE_H - 445, "OVERALL RISK SCORE")
-
-    # Plant + section
-    c.setFillColor(MUTED_WHITE)
-    c.setFont("Helvetica", 11)
-    c.drawCentredString(PAGE_W / 2, 80, session.get("plantName", ""))
-    c.drawCentredString(PAGE_W / 2, 62, session.get("section", ""))
-
-    # Company bottom
-    c.setFont("Helvetica", 10)
-    c.drawCentredString(PAGE_W / 2, 40, company_settings.get("companyName", ""))
+    # ── Company name ──────────────────────────────────────────────────────────
+    c.setFont("Times-Roman", 10)
+    c.setFillColor(GRAY_TEXT)
+    c.drawCentredString(PAGE_W / 2, rule_y - 90, company)
 
 
-def _section_header(title: str, styles) -> list:
-    style = ParagraphStyle(
-        "SectionHeader",
-        fontSize=13,
-        textColor=colors.white,
-        backColor=DARK_BG,
-        fontName="Helvetica-Bold",
-        spaceAfter=10,
-        spaceBefore=14,
-        leftIndent=8,
-        leading=20,
+# ── Table-of-Contents page ────────────────────────────────────────────────────
+
+def _build_toc(zones: list) -> list:
+    """Return platypus story elements for the TOC page."""
+    story = []
+
+    heading_style = ParagraphStyle(
+        "TOCHeading",
+        fontName="Times-Bold",
+        fontSize=18,
+        leading=26,
+        spaceAfter=6,
+        underline=True,
+        textColor=BLACK,
+        alignment=TA_LEFT,
     )
-    return [Paragraph(title, style), Spacer(1, 6)]
+    item_style = ParagraphStyle(
+        "TOCItem",
+        fontName="Times-Roman",
+        fontSize=12,
+        leading=20,
+        leftIndent=20,
+        spaceAfter=4,
+        textColor=BLACK,
+    )
 
+    story.append(Paragraph("Table of Contents", heading_style))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=LIGHT_GRAY, spaceAfter=14))
+
+    toc_entries = [
+        ("1.", "Zone Analysis"),
+        ("2.", "Zone-wise Action Table"),
+        ("3.", "Final Recommendation & Conclusion"),
+        ("4.", "Inspector Details & Certification"),
+    ]
+    # Inject zone sub-entries under Zone Analysis
+    for num, title in toc_entries:
+        story.append(Paragraph(f"{num}  {title}", item_style))
+        if num == "1.":
+            for i, z in enumerate(zones, 1):
+                story.append(Paragraph(
+                    f"&nbsp;&nbsp;&nbsp;&nbsp;1.{i}  {z.get('zoneLabel', '')}",
+                    ParagraphStyle("TOCSub", fontName="Times-Roman", fontSize=10,
+                                   leading=16, leftIndent=40, textColor=GRAY_TEXT),
+                ))
+
+    return story
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _section_title(text: str) -> list:
+    """Bold Times section header with underline rule."""
+    style = ParagraphStyle(
+        "SecTitle",
+        fontName="Times-Bold",
+        fontSize=15,
+        leading=22,
+        spaceBefore=18,
+        spaceAfter=4,
+        textColor=BLACK,
+    )
+    return [
+        Paragraph(text, style),
+        HRFlowable(width="100%", thickness=0.8, color=BLACK, spaceAfter=10),
+    ]
+
+
+def _zone_sub_title(text: str) -> Paragraph:
+    return Paragraph(text, ParagraphStyle(
+        "ZoneSub",
+        fontName="Times-Bold",
+        fontSize=13,
+        leading=18,
+        spaceBefore=14,
+        spaceAfter=6,
+        textColor=BLACK,
+    ))
+
+
+def _body(text: str) -> Paragraph:
+    return Paragraph(text, ParagraphStyle(
+        "Body",
+        fontName="Times-Roman",
+        fontSize=11,
+        leading=16,
+        spaceAfter=6,
+        textColor=BLACK,
+        alignment=TA_JUSTIFY,
+    ))
+
+
+def _small(text: str, color=None) -> Paragraph:
+    return Paragraph(text, ParagraphStyle(
+        "Small",
+        fontName="Times-Roman",
+        fontSize=9,
+        leading=13,
+        textColor=color or GRAY_TEXT,
+    ))
+
+
+def _decode_image(img_data: dict, width_pt: float, height_pt: float):
+    """Decode a base64 image dict and return a ReportLab Image object, or None."""
+    try:
+        raw     = base64.b64decode(img_data.get("base64", ""))
+        pil_img = PILImage.open(io.BytesIO(raw))
+        # Convert RGBA / palette → RGB so JPEG save works
+        if pil_img.mode not in ("RGB", "L"):
+            pil_img = pil_img.convert("RGB")
+        tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+        pil_img.save(tmp.name, "JPEG", quality=85)
+        tmp.close()
+        return Image(tmp.name, width=width_pt, height=height_pt)
+    except Exception:
+        return None
+
+
+# ── Zone images layout ────────────────────────────────────────────────────────
+
+def _zone_images(zone: dict) -> list:
+    """Return a story block with zone images in a 2-up grid with captions."""
+    story    = []
+    images   = zone.get("images", [])
+    label    = zone.get("zoneLabel", "")
+    if not images:
+        story.append(_small("No images captured for this zone."))
+        return story
+
+    IMG_W, IMG_H = 220, 160
+    cap_style = ParagraphStyle("ImgCap", fontName="Times-Italic", fontSize=8,
+                               leading=12, alignment=TA_CENTER, textColor=GRAY_TEXT)
+
+    pairs = []
+    for img_data in images:
+        rl_img = _decode_image(img_data, IMG_W, IMG_H)
+        if rl_img:
+            pairs.append(rl_img)
+
+    if not pairs:
+        story.append(_small("Images could not be rendered."))
+        return story
+
+    # Arrange in rows of 2
+    for i in range(0, len(pairs), 2):
+        left  = pairs[i]
+        right = pairs[i + 1] if i + 1 < len(pairs) else Spacer(IMG_W, IMG_H)
+        left_cap  = Paragraph(f"{label} — Photo {i + 1}", cap_style)
+        right_cap = Paragraph(f"{label} — Photo {i + 2}", cap_style) if i + 1 < len(pairs) else Paragraph("", cap_style)
+
+        t = Table(
+            [[left,     right],
+             [left_cap, right_cap]],
+            colWidths=[IMG_W + 10, IMG_W + 10],
+        )
+        t.setStyle(TableStyle([
+            ("ALIGN",   (0, 0), (-1, -1), "CENTER"),
+            ("VALIGN",  (0, 0), (-1, 0),  "MIDDLE"),
+            ("VALIGN",  (0, 1), (-1, 1),  "TOP"),
+            ("TOPPADDING",    (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+            # thin border around each image cell
+            ("BOX",  (0, 0), (0, 0), 0.5, LIGHT_GRAY),
+            ("BOX",  (1, 0), (1, 0), 0.5, LIGHT_GRAY),
+        ]))
+        story.append(t)
+        story.append(Spacer(1, 10))
+
+    return story
+
+
+# ── Zone action table ─────────────────────────────────────────────────────────
+
+def _zone_action_table(zones: list, report_content: dict) -> list:
+    """Build the consolidated zone-wise action table."""
+    story = []
+    story += _section_title("2. Zone-wise Action Table")
+
+    header = ["Zone / Item", "Description / Anomaly", "Severity", "Risk Score",
+              "Timeline to Cure", "Recommended Action"]
+    col_widths = [70, 140, 55, 50, 90, 115]
+
+    tbl_data  = [header]
+    tbl_style = [
+        # Header row
+        ("BACKGROUND",    (0, 0), (-1, 0), TABLE_HEAD),
+        ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
+        ("FONTNAME",      (0, 0), (-1, 0), "Times-Bold"),
+        ("FONTSIZE",      (0, 0), (-1, 0), 8),
+        ("ALIGN",         (0, 0), (-1, 0), "CENTER"),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("FONTNAME",      (0, 1), (-1, -1), "Times-Roman"),
+        ("FONTSIZE",      (0, 1), (-1, -1), 8),
+        ("GRID",          (0, 0), (-1, -1), 0.4, LIGHT_GRAY),
+        ("TOPPADDING",    (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 4),
+        ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, ROW_ALT]),
+    ]
+
+    # Build a lookup: zone label → maintenance schedule entry
+    sched_lookup = {}
+    for item in report_content.get("maintenanceSchedule", []):
+        sched_lookup[item.get("zone", "")] = item
+
+    row_idx = 1
+    for zone in zones:
+        findings  = zone.get("aiFindings") or {}
+        label     = zone.get("zoneLabel", "")
+        severity  = zone.get("severity", "")
+        risk      = findings.get("riskScore", "—")
+        priority  = findings.get("maintenancePriority", "P3")
+        timeline  = risk_timeline(priority)
+        anomalies = findings.get("anomalies", ["No anomalies recorded"])
+        sched     = sched_lookup.get(label, {})
+        rec_action = sched.get("action", findings.get("summary", "—"))
+
+        # One row per anomaly, first row carries zone label
+        for a_idx, anomaly in enumerate(anomalies):
+            zone_cell = label if a_idx == 0 else ""
+            sev_cell  = severity if a_idx == 0 else ""
+            risk_cell = str(risk) if a_idx == 0 else ""
+            time_cell = timeline if a_idx == 0 else ""
+            rec_cell  = rec_action if a_idx == 0 else ""
+
+            tbl_data.append([zone_cell, anomaly, sev_cell, risk_cell, time_cell, rec_cell])
+
+            if a_idx == 0 and severity:
+                bg, fg = severity_colors(severity)
+                tbl_style.append(("BACKGROUND", (2, row_idx), (2, row_idx), bg))
+                tbl_style.append(("TEXTCOLOR",  (2, row_idx), (2, row_idx), fg))
+                tbl_style.append(("FONTNAME",   (2, row_idx), (2, row_idx), "Times-Bold"))
+            row_idx += 1
+
+    tbl = Table(tbl_data, colWidths=col_widths, repeatRows=1)
+    tbl.setStyle(TableStyle(tbl_style))
+    story.append(tbl)
+    return story
+
+
+# ── Final recommendation & conclusion ─────────────────────────────────────────
+
+def _recommendation_section(report_content: dict, session: dict) -> list:
+    story = []
+    story += _section_title("3. Final Recommendation & Conclusion")
+
+    exec_summary = report_content.get("executiveSummary", "")
+    story.append(_body(exec_summary))
+    story.append(Spacer(1, 10))
+
+    # Priority action highlights
+    actions = report_content.get("priorityActions", [])
+    if actions:
+        story.append(Paragraph("Key Recommendations:", ParagraphStyle(
+            "RecHead", fontName="Times-Bold", fontSize=11, leading=16,
+            spaceBefore=8, spaceAfter=4)))
+        for i, act in enumerate(actions, 1):
+            urg = act.get("urgency", "Low")
+            _, fg = severity_colors(urg)
+            txt  = (f"<b>{i}.</b> [{urg}]  <b>{act.get('zone', '')}</b> — "
+                    f"{act.get('finding', '')}")
+            story.append(Paragraph(txt, ParagraphStyle(
+                f"ActItem{i}", fontName="Times-Roman", fontSize=10,
+                leading=15, leftIndent=16, spaceAfter=3, textColor=fg)))
+
+    # Compliance summary
+    comp = report_content.get("complianceSummary", [])
+    if comp:
+        story.append(Spacer(1, 10))
+        story.append(Paragraph("Compliance Status:", ParagraphStyle(
+            "CompHead", fontName="Times-Bold", fontSize=11, leading=16,
+            spaceBefore=8, spaceAfter=4)))
+        c_header = ["Finding", "Standard", "Status"]
+        c_data   = [c_header]
+        c_style  = [
+            ("BACKGROUND",    (0, 0), (-1, 0), TABLE_HEAD),
+            ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
+            ("FONTNAME",      (0, 0), (-1, 0), "Times-Bold"),
+            ("FONTSIZE",      (0, 0), (-1, -1), 9),
+            ("GRID",          (0, 0), (-1, -1), 0.4, LIGHT_GRAY),
+            ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+            ("FONTNAME",      (0, 1), (-1, -1), "Times-Roman"),
+            ("TOPPADDING",    (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, ROW_ALT]),
+        ]
+        status_fg = {"Compliant": GREEN_TEXT, "Non-Compliant": RED_TEXT, "Needs Review": AMBER_TEXT}
+        for ri, row in enumerate(comp, 1):
+            s   = row.get("status", "")
+            c_data.append([row.get("finding", ""), row.get("standard", ""), s])
+            if s in status_fg:
+                c_style.append(("TEXTCOLOR",  (2, ri), (2, ri), status_fg[s]))
+                c_style.append(("FONTNAME",   (2, ri), (2, ri), "Times-Bold"))
+        ctbl = Table(c_data, colWidths=[230, 120, 100])
+        ctbl.setStyle(TableStyle(c_style))
+        story.append(ctbl)
+
+    return story
+
+
+# ── Inspector details & signature ─────────────────────────────────────────────
+
+def _inspector_page(session: dict, company_settings: dict) -> list:
+    story = []
+    story.append(PageBreak())
+    story += _section_title("4. Inspector Details & Certification")
+
+    label_style = ParagraphStyle("Lbl", fontName="Times-Bold", fontSize=10,
+                                 leading=15, textColor=GRAY_TEXT)
+    value_style = ParagraphStyle("Val", fontName="Times-Roman", fontSize=11,
+                                 leading=16, textColor=BLACK)
+
+    meta = [
+        ("Operator / Inspector", session.get("operator", "—")),
+        ("Date of Inspection",   session.get("created_at", "—")[:10]),
+        ("Plant Name",           session.get("plantName", "—")),
+        ("Section / Area",       session.get("section", "—")),
+        ("Industry",             session.get("industry", "—")),
+        ("Session ID",           session.get("session_id", "—")),
+        ("Company",              company_settings.get("companyName", "—")),
+        ("Overall Risk Score",   str(session.get("overallRiskScore", "—"))),
+    ]
+    tbl_data = [[Paragraph(k, label_style), Paragraph(v, value_style)] for k, v in meta]
+    meta_tbl = Table(tbl_data, colWidths=[160, 330])
+    meta_tbl.setStyle(TableStyle([
+        ("GRID",          (0, 0), (-1, -1), 0.4, LIGHT_GRAY),
+        ("BACKGROUND",    (0, 0), (0, -1),  ROW_ALT),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 8),
+    ]))
+    story.append(meta_tbl)
+    story.append(Spacer(1, 40))
+
+    # Signature lines
+    story.append(Paragraph("Signatures", ParagraphStyle("SigHead", fontName="Times-Bold",
+                            fontSize=12, leading=18, spaceBefore=10, spaceAfter=14)))
+    for sig_label in ["Inspector / Operator", "Supervisor / Reviewer", "Date"]:
+        story.append(HRFlowable(width="55%", thickness=0.6, color=BLACK, spaceAfter=4))
+        story.append(Paragraph(sig_label, label_style))
+        story.append(Spacer(1, 24))
+
+    story.append(Spacer(1, 20))
+    story.append(_small(
+        "This report was generated by FieldSense AI. All findings must be verified by a "
+        "qualified engineer prior to any remediation or maintenance action. "
+        "Unauthorised reproduction of this document is prohibited.",
+        color=GRAY_TEXT,
+    ))
+    return story
+
+
+# ── Main entry point ──────────────────────────────────────────────────────────
 
 def generate_report(session: dict, report_content: dict, company_settings: dict, trend_data: dict) -> str:
     os.makedirs("reports", exist_ok=True)
-    path = f"reports/{session['session_id']}.pdf"
-    styles = getSampleStyleSheet()
+    path     = f"reports/{session['session_id']}.pdf"
+    zones    = session.get("zones", [])
 
-    body_style = ParagraphStyle("Body", fontSize=11, leading=15.4, spaceAfter=8)
-    label_style = ParagraphStyle("Label", fontSize=10, textColor=GRAY_TEXT)
-    italic_style = ParagraphStyle("Italic", fontSize=10, fontName="Helvetica-Oblique", textColor=GRAY_TEXT)
-    toc_style = ParagraphStyle("TOC", fontSize=13, fontName="Helvetica-Bold", spaceAfter=14)
-
-    story = []
-
-    # --- TABLE OF CONTENTS (page 1 in story; cover drawn separately) ---
-    story.append(Paragraph("Table of Contents", ParagraphStyle("TOCHead", fontSize=20, fontName="Helvetica-Bold", spaceAfter=20)))
-    toc_items = [
-        "01  Executive Summary",
-        "02  Priority Action List",
-        "03  Zone-by-Zone Analysis",
-        "04  Photo Documentation",
-        "05  Trend Memory",
-        "06  Predictive Maintenance Schedule",
-        "07  Compliance Mapping",
-    ]
-    for item in toc_items:
-        story.append(Paragraph(item, ParagraphStyle("TOCItem", fontSize=12, spaceAfter=10, leftIndent=10)))
-    story.append(PageBreak())
-
-    # --- SECTION 01: EXECUTIVE SUMMARY ---
-    story += _section_header("01  Executive Summary", styles)
-    story.append(Paragraph(report_content.get("executiveSummary", ""), body_style))
-    story.append(Spacer(1, 10))
-    meta = [
-        ["Operator", session.get("operator", "")],
-        ["Date", session.get("created_at", "")[:10]],
-        ["Industry", session.get("industry", "")],
-        ["Plant", session.get("plantName", "")],
-        ["Section", session.get("section", "")],
-    ]
-    meta_table = Table([[Paragraph(k, label_style), Paragraph(v, body_style)] for k, v in meta], colWidths=[120, 340])
-    meta_table.setStyle(TableStyle([
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#DDDDDD")),
-        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#F5F5F5")),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("PADDING", (0, 0), (-1, -1), 6),
-    ]))
-    story.append(meta_table)
-    story.append(PageBreak())
-
-    # --- SECTION 02: PRIORITY ACTION LIST ---
-    story += _section_header("02  Priority Action List", styles)
-    pa_data = [["Priority", "Zone", "Finding", "Risk Score", "Urgency"]]
-    urgency_bg = {"Critical": RED_BG, "High": AMBER_BG, "Medium": AMBER_BG, "Low": GREEN_BG}
-    urgency_fg = {"Critical": RED_TEXT, "High": AMBER_TEXT, "Medium": AMBER_TEXT, "Low": GREEN_TEXT}
-    pa_style = [
-        ("BACKGROUND", (0, 0), (-1, 0), DARK_BG),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CCCCCC")),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("PADDING", (0, 0), (-1, -1), 6),
-    ]
-    for i, action in enumerate(report_content.get("priorityActions", []), 1):
-        urg = action.get("urgency", "Low")
-        pa_data.append([
-            str(i), action.get("zone", ""), action.get("finding", ""),
-            str(action.get("riskScore", "")), urg,
-        ])
-        pa_style.append(("BACKGROUND", (0, i), (-1, i), urgency_bg.get(urg, colors.white)))
-        pa_style.append(("TEXTCOLOR", (4, i), (4, i), urgency_fg.get(urg, colors.black)))
-
-    pa_table = Table(pa_data, colWidths=[40, 90, 210, 70, 70])
-    pa_table.setStyle(TableStyle(pa_style))
-    story.append(pa_table)
-    story.append(PageBreak())
-
-    # --- SECTION 03: ZONE-BY-ZONE ANALYSIS ---
-    story += _section_header("03  Zone-by-Zone Analysis", styles)
-    severity_colors_map = {"Critical": RED_TEXT, "High": AMBER_TEXT, "Medium": AMBER_TEXT, "Low": GREEN_TEXT}
-    for zone in session.get("zones", []):
-        findings_obj = zone.get("aiFindings") or {}
-        zone_id = zone.get("zoneId", "")
-        severity = zone.get("severity", "")
-        trend = trend_data.get(zone_id, {})
-
-        zone_header = ParagraphStyle(
-            "ZoneH", fontSize=11, fontName="Helvetica-Bold",
-            textColor=colors.white, backColor=colors.HexColor("#2A2A4E"),
-            leftIndent=6, leading=18, spaceAfter=6, spaceBefore=10,
-        )
-        story.append(Paragraph(f"{zone.get('zoneLabel', '')}  [{severity}]", zone_header))
-
-        for anomaly in findings_obj.get("anomalies", []):
-            story.append(Paragraph(f"• {anomaly}", body_style))
-
-        delta = trend.get("delta", 0)
-        delta_str = f"+{delta}" if delta > 0 else str(delta)
-        story.append(Paragraph(f"<i>Trend note: {delta_str} from previous inspection</i>", italic_style))
-
-        prio = findings_obj.get("maintenancePriority", "P3")
-        prio_color = RED_TEXT if prio == "P1" else (AMBER_TEXT if prio == "P2" else GREEN_TEXT)
-        story.append(Paragraph(
-            f"Predicted failure: {findings_obj.get('predictedFailureWindow', 'N/A')}",
-            ParagraphStyle("Fail", fontSize=10, textColor=prio_color),
-        ))
-
-        codes = "  ".join([f"[{c}]" for c in findings_obj.get("complianceCodes", [])])
-        if codes:
-            story.append(Paragraph(codes, ParagraphStyle("Codes", fontSize=9, textColor=TEAL)))
-        story.append(Spacer(1, 8))
-    story.append(PageBreak())
-
-    # --- SECTION 04: PHOTO DOCUMENTATION ---
-    story += _section_header("04  Photo Documentation", styles)
-    for zone in session.get("zones", []):
-        story.append(Paragraph(zone.get("zoneLabel", ""), ParagraphStyle("ZoneSub", fontSize=11, fontName="Helvetica-Bold", spaceAfter=6, spaceBefore=8)))
-        images = zone.get("images", [])
-        if not images:
-            story.append(Paragraph("No photos captured for this zone.", italic_style))
-            continue
-        img_row = []
-        for img_data in images:
-            try:
-                raw = base64.b64decode(img_data.get("base64", ""))
-                pil_img = PILImage.open(io.BytesIO(raw))
-                tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
-                pil_img.save(tmp.name, "JPEG")
-                tmp.close()
-                rl_img = Image(tmp.name, width=220, height=160)
-                caption = Paragraph(zone.get("zoneLabel", ""), ParagraphStyle("Cap", fontSize=9, textColor=GRAY_TEXT, alignment=TA_CENTER))
-                img_row.append([rl_img, caption])
-                if len(img_row) == 2:
-                    t = Table([[img_row[0][0], img_row[1][0]], [img_row[0][1], img_row[1][1]]], colWidths=[240, 240])
-                    t.setStyle(TableStyle([("ALIGN", (0, 0), (-1, -1), "CENTER"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
-                    story.append(t)
-                    story.append(Spacer(1, 8))
-                    img_row = []
-            except Exception:
-                story.append(Paragraph("Image could not be rendered.", italic_style))
-        if img_row:
-            t = Table([[img_row[0][0]], [img_row[0][1]]], colWidths=[240])
-            t.setStyle(TableStyle([("ALIGN", (0, 0), (-1, -1), "CENTER")]))
-            story.append(t)
-    story.append(PageBreak())
-
-    # --- SECTION 05: TREND MEMORY ---
-    story += _section_header("05  Trend Memory", styles)
-    trend_table_data = [["Zone", "Previous Score", "Current Score", "Change", "Trend"]]
-    for zone in session.get("zones", []):
-        zid = zone.get("zoneId", "")
-        t = trend_data.get(zid, {})
-        current = (zone.get("aiFindings") or {}).get("riskScore", 0)
-        prev = t.get("previousScore", current)
-        delta = t.get("delta", 0)
-        delta_label = f"+{delta}" if delta > 0 else str(delta)
-        if delta > 0:
-            trend_label = "↑ Worsening"
-        elif delta < 0:
-            trend_label = "↓ Improving"
-        else:
-            trend_label = "→ Stable"
-        trend_table_data.append([zone.get("zoneLabel", ""), str(prev), str(current), delta_label, trend_label])
-
-    trend_table = Table(trend_table_data, colWidths=[120, 100, 100, 80, 100])
-    trend_style = [
-        ("BACKGROUND", (0, 0), (-1, 0), DARK_BG),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CCCCCC")),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("PADDING", (0, 0), (-1, -1), 6),
-    ]
-    for i, zone in enumerate(session.get("zones", []), 1):
-        delta = trend_data.get(zone.get("zoneId", ""), {}).get("delta", 0)
-        if delta > 0:
-            trend_style.append(("TEXTCOLOR", (3, i), (3, i), RED_TEXT))
-            trend_style.append(("TEXTCOLOR", (4, i), (4, i), RED_TEXT))
-        elif delta < 0:
-            trend_style.append(("TEXTCOLOR", (3, i), (3, i), GREEN_TEXT))
-            trend_style.append(("TEXTCOLOR", (4, i), (4, i), GREEN_TEXT))
-    trend_table.setStyle(TableStyle(trend_style))
-    story.append(trend_table)
-    story.append(PageBreak())
-
-    # --- SECTION 06: MAINTENANCE SCHEDULE ---
-    story += _section_header("06  Predictive Maintenance Schedule", styles)
-    ms_data = [["Zone", "Issue", "Priority", "Recommended Action", "Timeframe"]]
-    ms_style = [
-        ("BACKGROUND", (0, 0), (-1, 0), DARK_BG),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CCCCCC")),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("PADDING", (0, 0), (-1, -1), 6),
-    ]
-    for i, item in enumerate(report_content.get("maintenanceSchedule", []), 1):
-        p = item.get("priority", "P3")
-        bg, fg = priority_colors(p)
-        ms_data.append([item.get("zone", ""), item.get("issue", ""), p, item.get("action", ""), item.get("timeframe", "")])
-        ms_style.append(("BACKGROUND", (2, i), (2, i), bg))
-        ms_style.append(("TEXTCOLOR", (2, i), (2, i), fg))
-        ms_style.append(("FONTNAME", (2, i), (2, i), "Helvetica-Bold"))
-
-    ms_table = Table(ms_data, colWidths=[80, 120, 55, 170, 75])
-    ms_table.setStyle(TableStyle(ms_style))
-    story.append(ms_table)
-    story.append(PageBreak())
-
-    # --- SECTION 07: COMPLIANCE MAPPING ---
-    story += _section_header("07  Compliance Mapping", styles)
-    comp_data = [["Finding", "Standard Code", "Standard Name", "Status"]]
-    compliance_names = {
-        "OSHA 1910.303": "Electrical wiring methods",
-        "ISO 50001": "Energy management systems",
-        "IEC 60079-14": "Explosive atmospheres",
-        "API 570": "Piping inspection code",
-        "NFPA 72": "Fire alarm and signaling",
-        "ISO 45001": "Occupational health and safety",
-        "API 510": "Pressure vessel inspection",
-        "ASHRAE 15": "Refrigeration safety",
-    }
-    comp_style = [
-        ("BACKGROUND", (0, 0), (-1, 0), DARK_BG),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CCCCCC")),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("PADDING", (0, 0), (-1, -1), 6),
-    ]
-    for i, item in enumerate(report_content.get("complianceSummary", []), 1):
-        std = item.get("standard", "")
-        s = item.get("status", "")
-        comp_data.append([item.get("finding", ""), std, compliance_names.get(std, std), s])
-        comp_style.append(("TEXTCOLOR", (3, i), (3, i), status_color(s)))
-        comp_style.append(("FONTNAME", (3, i), (3, i), "Helvetica-Bold"))
-
-    comp_table = Table(comp_data, colWidths=[160, 90, 130, 100])
-    comp_table.setStyle(TableStyle(comp_style))
-    story.append(comp_table)
-    story.append(Spacer(1, 30))
-
-    # --- SIGNATURE BLOCK ---
-    story.append(Paragraph("Report Certification", ParagraphStyle("SigHead", fontSize=14, fontName="Helvetica-Bold", spaceAfter=20)))
-    for label in ["Operator", "Supervisor", "Date"]:
-        story.append(HRFlowable(width="60%", thickness=0.5, color=GRAY_TEXT))
-        story.append(Paragraph(label, label_style))
-        story.append(Spacer(1, 20))
-    story.append(Paragraph(
-        "This report was generated by FieldSense AI. All findings should be verified by a qualified engineer before remediation.",
-        ParagraphStyle("Disclaimer", fontSize=9, textColor=GRAY_TEXT, fontName="Helvetica-Oblique"),
-    ))
-
-    # Build PDF with cover as first page
-    doc = SimpleDocTemplate(
-        path, pagesize=A4,
-        topMargin=50, bottomMargin=50,
-        leftMargin=36, rightMargin=36,
-    )
-
-    class MyCanvas(HeaderFooterCanvas):
-        pass
-
-    # We build normally; cover is page 0 (no header/footer)
-    # We draw cover manually on a temp canvas then prepend
-    from reportlab.lib.utils import ImageReader
-    import copy
-
-    # Build story pages
-    tmp_path = path + ".tmp.pdf"
-    doc2 = SimpleDocTemplate(
-        tmp_path, pagesize=A4,
-        topMargin=50, bottomMargin=50,
-        leftMargin=36, rightMargin=36,
-    )
-
-    def make_canvas_factory(session_d, settings_d):
-        class _Canvas(HeaderFooterCanvas):
-            def __init__(self, *a, **kw):
-                super().__init__(*a, session=session_d, company_settings=settings_d, **kw)
-        return _Canvas
-
-    doc2.build(story, canvasmaker=make_canvas_factory(session, company_settings))
-
-    # Now create final PDF: cover page + story pages merged
-    from reportlab.pdfgen import canvas as pdfcanvas
+    # ── 1. Draw cover page onto a temporary PDF ───────────────────────────────
     cover_path = path + ".cover.pdf"
-    c = pdfcanvas.Canvas(cover_path, pagesize=A4)
-    _cover_page(c, session, company_settings)
+    c = canvas.Canvas(cover_path, pagesize=A4)
+    _draw_cover(c, session, company_settings)
     c.showPage()
     c.save()
 
-    # Merge cover + story using basic approach
+    # ── 2. Build story (TOC → Analysis → Action table → Recommendation → Inspector) ──
+    story = []
+
+    # TOC page
+    story += _build_toc(zones)
+    story.append(PageBreak())
+
+    # ── Section 1: Zone-by-Zone Analysis with images ──────────────────────────
+    story += _section_title("1. Zone Analysis")
+
+    body_style = ParagraphStyle("BodyNorm", fontName="Times-Roman", fontSize=11,
+                                leading=16, spaceAfter=6, alignment=TA_JUSTIFY)
+    bullet_style = ParagraphStyle("Bullet", fontName="Times-Roman", fontSize=10,
+                                  leading=15, leftIndent=14, spaceAfter=3)
+    code_style = ParagraphStyle("Code", fontName="Times-Italic", fontSize=9,
+                                leading=13, textColor=colors.HexColor("#0055AA"), spaceAfter=4)
+
+    for zone in zones:
+        findings  = zone.get("aiFindings") or {}
+        label     = zone.get("zoneLabel", "")
+        severity  = zone.get("severity", "")
+        risk      = findings.get("riskScore", 0)
+        trend     = trend_data.get(zone.get("zoneId", ""), {})
+        delta     = trend.get("delta", 0)
+
+        # Zone sub-title
+        story.append(_zone_sub_title(f"1.{zones.index(zone)+1}  {label}"))
+
+        # Severity badge row
+        bg, fg = severity_colors(severity)
+        badge_data = [[f"Severity: {severity}", f"Risk Score: {risk}", f"Priority: {findings.get('maintenancePriority','—')}",
+                       f"Failure Window: {findings.get('predictedFailureWindow','N/A')}"]]
+        badge_tbl = Table(badge_data, colWidths=[120, 100, 90, 150])
+        badge_tbl.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (0, 0), bg),
+            ("TEXTCOLOR",     (0, 0), (0, 0), fg),
+            ("FONTNAME",      (0, 0), (-1, 0), "Times-Bold"),
+            ("FONTSIZE",      (0, 0), (-1, 0), 9),
+            ("ALIGN",         (0, 0), (-1, 0), "CENTER"),
+            ("VALIGN",        (0, 0), (-1, 0), "MIDDLE"),
+            ("BOX",           (0, 0), (-1, 0), 0.4, LIGHT_GRAY),
+            ("INNERGRID",     (0, 0), (-1, 0), 0.4, LIGHT_GRAY),
+            ("TOPPADDING",    (0, 0), (-1, 0), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 5),
+        ]))
+        story.append(badge_tbl)
+        story.append(Spacer(1, 8))
+
+        # Anomalies
+        anomalies = findings.get("anomalies", [])
+        if anomalies:
+            story.append(Paragraph("<b>Observed Anomalies:</b>", body_style))
+            for a in anomalies:
+                story.append(Paragraph(f"\u2022  {a}", bullet_style))
+
+        # Summary
+        summary = findings.get("summary", "")
+        if summary:
+            story.append(Spacer(1, 4))
+            story.append(_body(summary))
+
+        # Compliance codes
+        codes = findings.get("complianceCodes", [])
+        if codes:
+            story.append(Paragraph(
+                "Applicable Standards: " + "  ".join(f"[{c}]" for c in codes),
+                code_style
+            ))
+
+        # Trend note
+        delta_str = f"+{delta}" if delta > 0 else str(delta)
+        trend_note = f"Trend vs previous inspection: {delta_str} points"
+        story.append(_small(trend_note))
+        story.append(Spacer(1, 10))
+
+        # Images
+        story += _zone_images(zone)
+        story.append(Spacer(1, 14))
+
+    story.append(PageBreak())
+
+    # ── Section 2: Zone-wise Action Table ────────────────────────────────────
+    story += _zone_action_table(zones, report_content)
+    story.append(PageBreak())
+
+    # ── Section 3: Final Recommendation & Conclusion ──────────────────────────
+    story += _recommendation_section(report_content, session)
+
+    # ── Section 4: Inspector Details & Certification ──────────────────────────
+    story += _inspector_page(session, company_settings)
+
+    # ── 3. Render story pages with footer canvas ──────────────────────────────
+    tmp_path = path + ".body.pdf"
+
+    def canvas_factory(session_d, settings_d):
+        class _C(FooterCanvas):
+            def __init__(self, *a, **kw):
+                super().__init__(*a, session=session_d, company_settings=settings_d, **kw)
+        return _C
+
+    doc = SimpleDocTemplate(
+        tmp_path, pagesize=A4,
+        topMargin=50, bottomMargin=42,
+        leftMargin=50, rightMargin=50,
+    )
+    doc.build(story, canvasmaker=canvas_factory(session, company_settings))
+
+    # ── 4. Merge cover + body ─────────────────────────────────────────────────
     try:
-        import PyPDF2
-        merger = PyPDF2.PdfMerger()
-        merger.append(cover_path)
-        merger.append(tmp_path)
-        merger.write(path)
-        merger.close()
+        import pypdf
+        merger = pypdf.PdfWriter()
+        for src in [cover_path, tmp_path]:
+            reader = pypdf.PdfReader(src)
+            for pg in reader.pages:
+                merger.add_page(pg)
+        with open(path, "wb") as f:
+            merger.write(f)
         os.remove(cover_path)
         os.remove(tmp_path)
-    except ImportError:
-        # If PyPDF2 not available, just use the story PDF
+    except Exception:
+        # Fallback: ship body only
         os.rename(tmp_path, path)
         if os.path.exists(cover_path):
             os.remove(cover_path)

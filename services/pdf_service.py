@@ -153,31 +153,31 @@ def _draw_cover(c: canvas.Canvas, session: dict, company_settings: dict):
 
 # ── Cover as an inline Flowable ───────────────────────────────────────────────
 
-class _CoverPageFlowable(Spacer):
-    """Renders the cover using canvas primitives as the very first story page.
-    Claiming full availHeight forces ReportLab to treat it as a whole page,
-    so the following PageBreak lands on a fresh sheet — no PDF merge needed."""
+class _CoverPageFlowable(Flowable):
+    """Full-page cover. wrap() claims the entire available frame so ReportLab
+    gives it a dedicated page; draw() resets to true page origin before painting."""
 
     def __init__(self, session: dict, company_settings: dict):
-        super().__init__(width=PAGE_W, height=PAGE_H)
+        Flowable.__init__(self)
         self._session          = session
         self._company_settings = company_settings
 
+    def wrap(self, availWidth, availHeight):
+        # Claim full frame — forces a page break after this flowable
+        self.width  = availWidth
+        self.height = availHeight
+        return (availWidth, availHeight)
+
     def draw(self):
-        # Reset canvas transform to true page origin (ignores doc margins)
         c = self.canv
         c.saveState()
-        c.resetTransforms()
+        c.resetTransforms()   # wipe ALL transforms → true page (0,0) bottom-left
         _draw_cover(c, self._session, self._company_settings)
         c.restoreState()
 
-    def wrap(self, availWidth, availHeight):
-        # Return true A4 dimensions so the cover always gets a full page
-        from reportlab.lib.pagesizes import A4
-        return A4  # (595pt, 842pt) — not the margin-reduced available size
-
     def split(self, availWidth, availHeight):
-        return [self]                    # never split across pages
+        # Return empty — ReportLab will force a new page for us
+        return []
 
 
 # ── Table of Contents ─────────────────────────────────────────────────────────

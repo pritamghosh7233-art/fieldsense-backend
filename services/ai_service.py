@@ -29,7 +29,23 @@ def _invoke_with_retry(body: dict) -> dict:
             if "ThrottlingException" in str(e) and attempt < 2:
                 time.sleep(2 ** attempt)
                 continue
-            raise  # re-raise so the caller sees the real error
+            raise
+
+
+def _strip_images_from_session(session: dict) -> dict:
+    """Return a copy of session with all base64 image data removed.
+    Keeps image count metadata so the AI still knows images were captured."""
+    import copy
+    s = copy.deepcopy(session)
+    for zone in s.get("zones", []):
+        images = zone.get("images", [])
+        # Replace each image with a lightweight placeholder
+        zone["images"] = [
+            {"index": i, "note": "image_stripped_to_save_tokens"}
+            for i in range(len(images))
+        ]
+        zone["imageCount"] = len(images)
+    return s
 
 
 def analyze_observation(
@@ -86,7 +102,6 @@ def analyze_observation(
         text = response_body["content"][0]["text"]
         logger.info(f"[analyze_observation] Raw response text: {text[:300]}")
 
-        # Strip accidental markdown fences Claude sometimes adds
         clean = text.strip()
         if clean.startswith("```"):
             clean = clean.split("```")[1]
@@ -112,6 +127,12 @@ def analyze_observation(
 
 def generate_report_content(session: dict) -> dict:
     try:
+        # Strip base64 images before sending — they cause token overflow (2M+ tokens)
+        # The AI findings are already stored in zone.aiFindings so images aren't needed here
+        lean_session = _strip_images_from_session(session)
+        lean_json    = json.dumps(lean_session)
+        logger.info(f"[generate_report_content] Sending {len(lean_json)} chars to Bedrock (images stripped)")
+
         body = {
             "anthropic_version": "bedrock-2023-05-31",
             "max_tokens": 1500,
@@ -124,7 +145,7 @@ def generate_report_content(session: dict) -> dict:
                 '"complianceSummary": [{"finding": "string", "standard": "string", "status": "Compliant|Non-Compliant|Needs Review"}]}'
             ),
             "messages": [
-                {"role": "user", "content": f"Generate report for this inspection session:\n{json.dumps(session)}"}
+                {"role": "user", "content": f"Generate report for this inspection session:\n{lean_json}"}
             ],
         }
         response_body = _invoke_with_retry(body)
@@ -136,6 +157,7 @@ def generate_report_content(session: dict) -> dict:
                 clean = clean[4:]
             clean = clean.strip()
         return json.loads(clean)
+
     except Exception as e:
         logger.error(f"[generate_report_content] FAILED: {type(e).__name__}: {e}")
         return {

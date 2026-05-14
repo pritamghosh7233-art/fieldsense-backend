@@ -81,69 +81,75 @@ class FooterCanvas(canvas.Canvas):
         self.saveState()
         y       = 18
         company = self.company_settings.get("companyName", "")
-        self.setStrokeColor(LIGHT_GRAY)
-        self.setLineWidth(0.5)
-        self.line(36, y + 10, PAGE_W - 36, y + 10)
-        self.setFont("Times-Roman", 7)
-        self.setFillColor(GRAY_TEXT)
-        self.drawString(36, y, f"Page {page_num}")
-        self.drawCentredString(PAGE_W / 2, y, "CONFIDENTIAL")
-        self.drawRightString(PAGE_W - 36, y, company)
-        self.restoreState()
 
 
 # ── Cover page ────────────────────────────────────────────────────────────────
 
 def _draw_cover(c: canvas.Canvas, session: dict, company_settings: dict):
-    """Plain white corporate cover — no colours, vertically centred block."""
+    """Plain white corporate cover — full vertical + horizontal centre."""
     plant_name  = session.get("plantName", "")
     operator    = session.get("operator", "")
     company     = company_settings.get("companyName", "")
     zones       = session.get("zones", [])
     panel_names = ", ".join(z.get("zoneLabel", "") for z in zones) if zones else "All Zones"
 
-    # ── Heading: auto-size so both lines fit within margins ───────────────────
-    MARGIN  = 60
-    MAX_W   = PAGE_W - MARGIN * 2
-    line1   = "Inspection Report on"
-    line2   = f'"{plant_name}"'
-    font    = "Times-Bold"
-    size    = 36
+    MARGIN = 60
+    MAX_W  = PAGE_W - MARGIN * 2
+    CX     = PAGE_W / 2          # horizontal centre — every element uses this
+
+    # ── Heading: auto-size ────────────────────────────────────────────────────
+    line1 = "Inspection Report on"
+    line2 = f'"{plant_name}"'
+    font  = "Times-Bold"
+    size  = 36
     while size >= 14:
         if max(stringWidth(line1, font, size), stringWidth(line2, font, size)) <= MAX_W:
             break
         size -= 1
 
     leading = size * 1.3
-    block_h = leading * 2
-    top_y   = PAGE_H / 2 + block_h / 2 + 40
 
+    # Calculate total block height (2 heading lines + rule + sub-heading)
+    # then vertically centre that block on the page
+    block_h = leading * 2 + 24 + 28 + 13   # approx total height
+    top_y   = PAGE_H / 2 + block_h / 2     # true vertical centre
+
+    # ── Two heading lines ─────────────────────────────────────────────────────
     c.setFont(font, size)
     c.setFillColor(BLACK)
-    c.drawCentredString(PAGE_W / 2, top_y,           line1)
-    c.drawCentredString(PAGE_W / 2, top_y - leading, line2)
+    c.drawCentredString(CX, top_y,           line1)
+    c.drawCentredString(CX, top_y - leading, line2)
 
-    rule_y = top_y - leading - 20
+    # ── Horizontal rule ───────────────────────────────────────────────────────
+    rule_y = top_y - leading - 24
     c.setStrokeColor(BLACK)
     c.setLineWidth(0.6)
     c.line(MARGIN, rule_y, PAGE_W - MARGIN, rule_y)
 
+    # ── Sub-heading ───────────────────────────────────────────────────────────
     sub      = f"Detailed analysis report on {panel_names}"
     sub_font = "Times-Roman"
-    sub_size = 9
+    sub_size = 13
     while stringWidth(sub, sub_font, sub_size) > MAX_W and len(sub) > 20:
         sub = sub[:-4] + "…"
     c.setFont(sub_font, sub_size)
     c.setFillColor(GRAY_TEXT)
-    c.drawCentredString(PAGE_W / 2, rule_y - 22, sub)
+    c.drawCentredString(CX, rule_y - 28, sub)
 
-    c.setFont("Times-Roman", 10)
+    # ── Inspector block — pinned near page bottom ─────────────────────────────
+    bottom_y = 90
+
+    c.setStrokeColor(LIGHT_GRAY)
+    c.setLineWidth(0.4)
+    c.line(MARGIN + 40, bottom_y + 52, PAGE_W - MARGIN - 40, bottom_y + 52)
+
+    c.setFont("Times-Bold", 13)
     c.setFillColor(BLACK)
-    c.drawCentredString(PAGE_W / 2, rule_y - 60, f"Inspected by  {operator}")
+    c.drawCentredString(CX, bottom_y + 28, f"Inspected by:  {operator}")
 
-    c.setFont("Times-Roman", 10)
+    c.setFont("Times-Roman", 12)
     c.setFillColor(GRAY_TEXT)
-    c.drawCentredString(PAGE_W / 2, rule_y - 78, company)
+    c.drawCentredString(CX, bottom_y + 8, company)
 
 
 # ── Cover as an inline Flowable ───────────────────────────────────────────────

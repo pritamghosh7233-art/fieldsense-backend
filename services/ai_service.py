@@ -83,16 +83,18 @@ def analyze_observation(
 
     body = {
         "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 1500,
+        "max_tokens": 2000,
         "system": (
             "You are an expert industrial inspection AI. Analyze the voice transcript and images from a field inspection. "
-            'Return ONLY valid JSON (no markdown, no explanation) with this exact schema: {"anomalies": ["string"], '
+            "Return ONLY valid JSON (no markdown, no explanation) with this exact schema: "
+            '{"anomalies": ["string — keep each under 15 words"], '
             '"riskScore": number 0-100, "complianceCodes": ["string"], "predictedFailureWindow": "string", '
-            '"maintenancePriority": "P1|P2|P3", "summary": "string"}. '
+            '"maintenancePriority": "P1|P2|P3", "summary": "string — keep under 60 words"}. '
             "Risk score guide: <40 low, 40-69 medium, 70+ high. "
             "Maintenance priority: P1=immediate, P2=within 30 days, P3=within 90 days. "
             "Map findings to these compliance codes where relevant: "
-            "OSHA 1910.303, ISO 50001, IEC 60079-14, API 570, NFPA 72, ISO 45001, API 510, ASHRAE 15."
+            "OSHA 1910.303, ISO 50001, IEC 60079-14, API 570, NFPA 72, ISO 45001, API 510, ASHRAE 15. "
+            "CRITICAL: Keep your response concise so it fits in valid JSON. Never truncate mid-JSON."
         ),
         "messages": [{"role": "user", "content": content}],
     }
@@ -103,13 +105,29 @@ def analyze_observation(
         logger.info(f"[analyze_observation] Raw response text: {text[:300]}")
 
         clean = text.strip()
+
+        # Strip markdown fences if present
         if clean.startswith("```"):
             clean = clean.split("```")[1]
             if clean.startswith("json"):
                 clean = clean[4:]
             clean = clean.strip()
 
-        result = json.loads(clean)
+        # Fix trailing commas (common LLM mistake)
+        import re
+        clean = re.sub(r',\s*([}\]])', r'\1', clean)
+
+        # Extract first complete JSON object if extra data follows
+        try:
+            result = json.loads(clean)
+        except json.JSONDecodeError:
+            # Find the first complete {...} block and parse that
+            match = re.search(r'\{.*\}', clean, re.DOTALL)
+            if match:
+                result = json.loads(match.group())
+            else:
+                raise
+
         logger.info(f"[analyze_observation] Parsed OK — riskScore={result.get('riskScore')}")
         return result
 

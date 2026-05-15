@@ -11,7 +11,6 @@ from fastapi.middleware.cors import CORSMiddleware
 load_dotenv()
 
 from routers import sessions, reports, settings
-from routers.analyzed_reports import router as analyzed_router   # ← NEW
 
 COMPLIANCE_RULES = [
     {"code": "OSHA 1910.303", "name": "Electrical wiring methods", "description": "General requirements for electrical installations and wiring", "keywords": ["wiring", "panel", "terminal", "corrosion", "insulation", "grounding", "circuit"]},
@@ -50,7 +49,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="FieldSense Backend", version="1.1.0", lifespan=lifespan)
+app = FastAPI(title="FieldSense Backend", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -63,13 +62,8 @@ app.add_middleware(
 app.include_router(sessions.router)
 app.include_router(reports.router)
 app.include_router(settings.router)
-app.include_router(analyzed_router)   # ← NEW
 
 
 @app.get("/health")
 def health():
-    return {
-        "status": "ok",
-        "model": os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6"),
-        "db": "postgresql" if os.getenv("DATABASE_URL") else "json_fallback",
-    }
+    return {"status": "ok", "model": os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6")}
